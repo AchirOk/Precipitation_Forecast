@@ -1,0 +1,326 @@
+---
+title: "Precipitation prediction "
+author: "Achir Oukelmoun"
+date: "August 28, 2019"
+output:
+  html_document:
+    number_sections: yes
+    toc: yes
+    theme: united
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Data import and description
+
+## Data import and first adjustment
+In this section, the training data is imported and irrelevant variables, such as hours and minutes, are removed. 
+
+```{r importation, echo = FALSE,include = TRUE, results = 'hide',warning= FALSE, message = FALSE}
+setwd(getwd())
+library(corrplot)
+library(MASS)
+d0 = read.csv("meteo.train.csv")
+d = d0[,-c(1,2,4,5,6)]
+```
+
+Variable associated with wind directions use quantitative values from 0 - 360 but it is misleading in terms of regression since direction associated with the ends of the interval (0 and 360) are close while numerically they are not. 
+Therefore, variable associated with wind direction are removed and associated with 4 qualititative variable each one associated with a given wind direction. An intermediate mean_direction is used. The mean_direction takes the means directions taken at different heights.
+
+```{r Wind_Directions}
+Mean_Direction = (d[,16]+d[,14]+d[,18])/3
+d$Wind_N = 0 + (Mean_Direction>=303 | Mean_Direction<56) 
+d$Wind_E = 0 + (Mean_Direction>=56 & Mean_Direction<123)
+d$Wind_S = 0 + (Mean_Direction>=123 & Mean_Direction<236)
+d$Wind_W = 0 + (Mean_Direction>=236 & Mean_Direction<303)
+
+```
+
+For the same reason as wind directions, the variable associated with months is transformed to factors. Indeed the variable month takes values ranging from 1 to 12, which is misleading since, for instance, the month 12 is closer to  month 1 than month 10.
+
+```{r Months}
+d$M1 = d$Month == 1 
+d$M2 = d$Month == 2 
+d$M3 = d$Month == 3 
+d$M4 = d$Month == 4 
+d$M5 = d$Month == 5 
+d$M6 = d$Month == 6 
+d$M7 = d$Month == 7 
+d$M8 = d$Month == 8 
+d$M9 = d$Month == 9 
+d$M10 = d$Month == 10 
+d$M11 = d$Month == 11 
+d$M12= d$Month == 12 
+d = d[-c(1,18,16,14)]
+```
+
+The names of the variables (columns) are modified so that they can be easily plotted. The actual columns names are stored in a list "t". The key of the abreviated names is provided below:
+```{r, echo=FALSE}
+d1 = d
+n = length(d)
+Col = names(d)
+t=NULL 
+```
+
+```{r, echo=FALSE}
+
+for (i in 1: length(Col)){
+  t = c(t, paste("V",i, sep=""))
+}
+
+t_names = colnames(d)
+colnames(d1) = c(t)
+cible = which(t_names=="pluie.demain")
+```
+
+```{r}
+cat(paste(t, ": ", t_names, sep = ""), sep = "\n")
+```
+
+## Correlation analysis
+
+In this section, the correlation between the variables is studied in order to avoid a high collinearity between the variables selected for the next steps of the analysis.
+
+The correlation matrix is plotted below: 
+
+```{r correlation, echo = FALSE, warning= FALSE, message = FALSE}
+n = length(d)
+mat_corr = cor(d1)
+corrplot(mat_corr, type = "lower", tl.srt = 0)
+```
+
+A strong correlation between several variables is observed. This is not surprising because many variables refer to the same physical quantity but taken at different heights and times. 
+
+Given that:
+
+- There is a high colinearity between variables
+- The high number of variables
+
+A simple algorithm is developed in the following section to avoid any high collinearity between two variables. 
+
+# Model Selection
+
+## Description of the methodology
+
+The approach to select the best model will consist of several steps:
+
+- Remove variables with high correlation so as to ensure that two selected variables have a correlation which is less than a given threhold S. Indeed, for each variable X, the other variables highly correlated with the variable X will be removed. This step is sensitive to the ordre of apperance of variables in the data frame, this is why varibale will be shuffled several times using pre-defined seeds. 10 shuffles will be considered and 5 correlation thresholds. Low correlation thresholds are used so as to limit the number of variable retained for the following steps of the analysis. 
+- Use stepAIC function to select the model with the lowest AIC 
+- Use several threshold probability to predict. 7 probability thresholds will be considered. 
+
+To summarize, 10 seeds for shuffling the variable, 5 threshold of correlation between variables and 7 probability thresholds will be used during a 8-fold cross-validation. Then, the set (seed, correlation threshold, and probability threshold) associated with the lowest error will be retained.
+
+## The R code used
+
+
+
+The following R code is the one used to automatize the choise of the model. Comments are added so as to describe better the purpose of each instruction.
+
+```{r, warning= FALSE, message = FALSE}
+Seeds = 144100:144109 # Seeds for shuffling (iteration will be done with S)
+Thcorr = seq(0.6,0.8,length.out=5) # Thresholds to remove highly correlated variables (iteration will be done with Tc)
+Thprob = seq(0.47,0.53,length.out = 7) # Threshold for prediction (iteration will be done with Tp)
+d2 = d1
+n = length(d2)
+ListError = NULL # Where output errors are stored
+ListSeed = NULL # Where associated seed are stored
+ListThc = NULL # Where associated correlation thresholds are stored 
+ListThp = NULL # Where associated prediction threshold are stored
+ListFormula = NULL # Where associated model formula are stored
+
+NbrFolders = 8
+d0$Folders = sample(1:NbrFolders,length(d0[,1]), replace = TRUE) # Creation of 10 folders for cross-validations
+
+for (S in Seeds){ #Iterating over seeds used to shuffle the data frame
+  for (Tc in Thcorr){ #Iterating over correlation thresholds
+     set.seed(seed = S)
+      t1 = sample(1:n)[-cible]
+      
+      d1 = d2
+      
+      black_list = NULL
+      for (i in t1){
+        if (!(i %in% black_list)){
+          for (j in t1){
+            if(!(j %in% black_list) & j!=i){
+              if (abs(mat_corr[i,j])>=Tc ) { #Variable highly correlated are black listed
+                black_list = c(black_list, j)
+              }
+            }
+          }
+        }
+      }
+      selected_list = NULL
+      selected_list_names = NULL
+      for (i in 1:n){
+        if (!(i%in% black_list)){ #Only columns which are not blacklisted are retained
+          selected_list = c(selected_list,i)
+          selected_list_names = c(selected_list_names,t_names[i])
+        }
+      }
+      
+      d1 = d1[selected_list] #Only selected columns are retained
+      g = glm(V38~., data = d1, family = binomial)
+      
+      taic=stepAIC(g, V38~., data = d1, direction = "both", trace = 0) #Use of stepAIC to choose the best model in terms of AIC criterion
+      
+      formule = eval(taic$call[[2]]) #Recovering the fomula provided by the stepAIC function
+    
+      for (Tp in Thprob){ #Iterating over the probability threshold for prediction
+      
+        erreur_temp = NULL
+        for (i in 1:NbrFolders){
+          
+          dt = d1[d0$Folders!=i,] #Data Frame for training
+          dv = d1[d0$Folders == i,] #Data Frame for validation
+          
+          mt = glm(formule, family = binomial, data = dt)
+          prediction = predict(mt, newdata = dv, type = 'response')
+          Resultats = length(dv[,1]) - sum((prediction>Tp & dv$V38) | (prediction<Tp & !(dv$V38)))
+          
+          erreur_temp = c(erreur_temp, Resultats/length(dv[,1]))
+      }
+      
+      ListError = c(ListError, mean(erreur_temp)) # Where output errors are stored
+      ListSeed = c(ListSeed, S) # Where associated seed are stored
+      ListThc = c(ListThc, Tc) # Where associated correlation thresholds are stored 
+      ListThp = c(ListThp, Tp) # Where associated prediction threshold are stored
+      ListFormula = c(ListFormula, formule) # Where associated model formula are stored
+      
+    }
+    
+    
+  }
+  
+  
+  
+}
+
+```
+
+The retained model is therefore the following:
+
+```{r, echo = FALSE, warning= FALSE, message = FALSE}
+w = which.min(ListError)
+cat(paste("Prediction Threshold is: ", ListThp[w], sep = ""))
+cat(paste("Mean error is: ", round(ListError[w],2)))
+library(stringr)
+test = paste(c(deparse(ListFormula[w])), sep = '')
+test = paste(gsub("\\s+", " ", str_trim(test)), collapse = ' ')
+test = str_replace(test, "list", "")
+test = str_replace(test, "\\(", "")
+test = str_replace(test, "\\)", "")
+test = str_replace(test, "\\~", "")
+test = str_replace(test, "V38", "")
+cat("The model retained is: ")
+cat(test)
+
+cat("where :")
+cat("", end = "\n")
+
+
+for (i in 1:100){
+test = str_replace(test, "\\s+", "")
+}
+test2 = strsplit(test, "\\+")
+ids = NULL
+test2 = test2[[1]]
+for (k in 1 : length(test2)){
+  test3 = str_replace(test2[k], "V","")
+  ids = c(ids, strtoi(test3))
+}
+cat(paste("V",ids, ": ", t_names[ids], sep = ""), sep = "\n")
+
+
+```
+
+## Performance of the model
+
+The perfomance of the model is estimated by a leave-one-out validation. The results are the following:
+```{r, echo=FALSE}
+      
+      formule = ListFormula[w]
+      erreur_temp = NULL
+      for (i in 1:length(d2$V1)){
+        
+        dt = d2[-i,] #Data Frame for training
+        dv = d2[i,] #Data Frame for validation
+        
+        mt = glm(formule[[1]], family = binomial, data = dt)
+        prediction = predict(mt, newdata = dv, type = 'response')
+        Resultats = length(dv[,1]) - sum((prediction>Tp & dv$V38) | (prediction<Tp & !(dv$V38)))
+        
+        erreur_temp = c(erreur_temp, Resultats/length(dv[,1]))
+      }
+      
+      Error_Final = mean(erreur_temp)
+      cat(paste("The error estimate is therefore: ", round(Error_Final,3)))
+      mt = glm(formule[[1]], family = binomial, data = d2)
+
+```
+
+The variables used are consistant but the performance of the model seems to be relatively low. Moreover, testing several combinations through cross validation did not lead to a significant enhancement of the model performance. 
+
+## Model Interpretation
+
+The summary of the model selected is as follows:
+```{r, echo = FALSE}
+summary(mt)
+
+```
+
+All variables retained are significant while some modalities of Month "V1" are not. Therefore, we will check the sign of coefficients with the actual breackdown of tomorrow raining state per month. 
+```{r, echo = FALSE}
+mosaicplot(d0$Month~d2$V38, xlab = "Month", ylab = "Raining tomorrow", main = "Breakdown per month")
+```
+
+The main conclusion is that the coeffecient are consistant. Indeed, January is the month during which there is the highest proportion of rainy days compared to other months. 
+Coefficient of the other variables and could be check trough boxplots. 
+
+
+#Testing the model
+
+## Importing the test data set
+
+In this section, the test data set is imported and the same transformation on the variable are applied so as to make the predictions. The predictions are stored in the variable "Pluie.demain".
+
+
+```{r}
+td0 = read.csv("meteo.test.csv")
+td = td0[,-c(1,2,4,5,6)]
+td$pluie.demain = NA
+Mean_Direction = (td[,16]+td[,14]+td[,18])/3
+td$Wind_N = 0 + (Mean_Direction>=303 | Mean_Direction<56) 
+td$Wind_E = 0 + (Mean_Direction>=56 & Mean_Direction<123)
+td$Wind_S = 0 + (Mean_Direction>=123 & Mean_Direction<236)
+td$Wind_W = 0 + (Mean_Direction>=236 & Mean_Direction<303)
+td$M1 = td$Month == 1 
+td$M2 = td$Month == 2 
+td$M3 = td$Month == 3 
+td$M4 = td$Month == 4 
+td$M5 = td$Month == 5 
+td$M6 = td$Month == 6 
+td$M7 = td$Month == 7 
+td$M8 = td$Month == 8 
+td$M9 = td$Month == 9 
+td$M10 = td$Month == 10 
+td$M11 = td$Month == 11 
+td$M12= td$Month == 12 
+td = td[-c(1,18,16,14)]
+colnames(td) = c(t[-38])
+prediction = predict(mt, newdata = td, type = 'response')
+td0$Pluie.demain = prediction>Tp
+write.csv(td0, file="meteo.test.resultat.csv")
+td0 = read.csv("meteo.test.resultat.csv")
+```
+
+So to check preliminarly that the prediction are consistent with previous training data, the following mosaic plot provides the beakdown of the prediction by month. 
+```{r, echo = FALSE}
+mosaicplot(td0$Month~td0$Pluie.demain, xlab = "Month", ylab = "Raining tomorrow", main = "Breakdown per month")
+```
+
+By comparing the plot above with the one associated with training data, roughly the same behavior is observed but not exactly the same since here June in the predicted to the rainiest month while in the training data June is the third rainiest month.
+Finally, the model that we have could does not have a high accuracy level but provided acceptable results. 
+
