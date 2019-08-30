@@ -7,6 +7,7 @@ output:
     number_sections: yes
     toc: yes
     theme: united
+    code_folding: hide
 ---
 
 ```{r setup, include=FALSE}
@@ -27,7 +28,7 @@ d = d0[,-c(1,2,4,5,6)]
 ```
 
 Variable associated with wind directions use quantitative values from 0 - 360 but it is misleading in terms of regression since direction associated with the ends of the interval (0 and 360) are close while numerically they are not. 
-Therefore, variable associated with wind direction are removed and associated with 4 qualititative variable each one associated with a given wind direction. An intermediate mean_direction is used. The mean_direction takes the means directions taken at different heights.
+Therefore, variable associated with wind direction are removed and 4 qualititative variables are created,  each one associated with a given wind direction. An intermediate mean_direction is used. The mean_direction takes the means directions taken at different heights. The code hidden below specifies how the wind direction varibales are defined.
 
 ```{r Wind_Directions}
 Mean_Direction = (d[,16]+d[,14]+d[,18])/3
@@ -40,7 +41,7 @@ d$Wind_W = 0 + (Mean_Direction>=236 & Mean_Direction<303)
 
 For the same reason as wind directions, the variable associated with months is transformed to factors. Indeed the variable month takes values ranging from 1 to 12, which is misleading since, for instance, the month 12 is closer to  month 1 than month 10.
 
-```{r Months}
+```{r Months, echo = FALSE}
 d$M1 = d$Month == 1 
 d$M2 = d$Month == 2 
 d$M3 = d$Month == 3 
@@ -75,7 +76,7 @@ colnames(d1) = c(t)
 cible = which(t_names=="pluie.demain")
 ```
 
-```{r}
+```{r, echo = FALSE}
 cat(paste(t, ": ", t_names, sep = ""), sep = "\n")
 ```
 
@@ -116,7 +117,7 @@ To summarize, 10 seeds for shuffling the variable, 5 threshold of correlation be
 
 
 
-The following R code is the one used to automatize the choise of the model. Comments are added so as to describe better the purpose of each instruction.
+The R code hidden below is the one used to automatize the choise of the model. Comments are added so as to describe better the purpose of each instruction.
 
 ```{r, warning= FALSE, message = FALSE}
 Seeds = 144100:144109 # Seeds for shuffling (iteration will be done with S)
@@ -263,31 +264,21 @@ The perfomance of the model is estimated by a leave-one-out validation. The resu
 
 The variables used are consistant but the performance of the model seems to be relatively low. Moreover, testing several combinations through cross validation did not lead to a significant enhancement of the model performance. 
 
-## Model Interpretation
-
 The summary of the model selected is as follows:
 ```{r, echo = FALSE}
 summary(mt)
 
 ```
 
-All variables retained are significant while some modalities of Month "V1" are not. Therefore, we will check the sign of coefficients with the actual breackdown of tomorrow raining state per month. 
-```{r, echo = FALSE}
-mosaicplot(d0$Month~d2$V38, xlab = "Month", ylab = "Raining tomorrow", main = "Breakdown per month")
-```
-
-The main conclusion is that the coeffecient are consistant. Indeed, January is the month during which there is the highest proportion of rainy days compared to other months. 
-Coefficient of the other variables and could be check trough boxplots. 
+All variables retained are significant since the p-values associated with student tests are relatively low.
 
 
 #Testing the model
 
-## Importing the test data set
-
 In this section, the test data set is imported and the same transformation on the variable are applied so as to make the predictions. The predictions are stored in the variable "Pluie.demain".
 
 
-```{r}
+```{r, echo=FALSE}
 td0 = read.csv("meteo.test.csv")
 td = td0[,-c(1,2,4,5,6)]
 td$pluie.demain = NA
@@ -309,7 +300,7 @@ td$M10 = td$Month == 10
 td$M11 = td$Month == 11 
 td$M12= td$Month == 12 
 td = td[-c(1,18,16,14)]
-colnames(td) = c(t[-38])
+colnames(td) = c(t)
 prediction = predict(mt, newdata = td, type = 'response')
 td0$Pluie.demain = prediction>Tp
 write.csv(td0, file="meteo.test.resultat.csv")
@@ -317,10 +308,16 @@ td0 = read.csv("meteo.test.resultat.csv")
 ```
 
 So to check preliminarly that the prediction are consistent with previous training data, the following mosaic plot provides the beakdown of the prediction by month. 
+
 ```{r, echo = FALSE}
-mosaicplot(td0$Month~td0$Pluie.demain, xlab = "Month", ylab = "Raining tomorrow", main = "Breakdown per month")
+mosaicplot(td0$Month~td0$Pluie.demain, xlab = "Month", ylab = "Raining tomorrow", main = "Breakdown per month of prediction on test data")
 ```
 
-By comparing the plot above with the one associated with training data, roughly the same behavior is observed but not exactly the same since here June in the predicted to the rainiest month while in the training data June is the third rainiest month.
-Finally, the model that we have could does not have a high accuracy level but provided acceptable results. 
+While the breakdown of the prediction by month of training data is provided below:
+```{r, echo = FALSE}
+mosaicplot(d0$Month~d2$V38, xlab = "Month", ylab = "Raining tomorrow", main = "Breakdown per month of training data")
+```
+
+By comparing the plots above, roughly the same behavior is observed but not exactly the same since here June in the predicted to the rainiest month while in the training data June is the third rainiest month.
+Finally, the model that we have  does not have a high accuracy level but provides acceptable results. 
 
